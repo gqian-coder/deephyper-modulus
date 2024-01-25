@@ -8,17 +8,6 @@ This example runs on a single GPU, go to the
 
 ## Getting Started
 
-To train the model, run
-
-```bash
-python train_fno_darcy.py
-```
-
-training data will be generated on the fly.
-
-Progress can be monitored using MLFlow. Open a new terminal and navigate to the training
-directory, then run:
-
 To train the baseline model, run
 ```bash
 python Trainer.py 
