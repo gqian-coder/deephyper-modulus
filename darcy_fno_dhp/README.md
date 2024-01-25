@@ -24,6 +24,11 @@ To train the baseline model, run
 python Trainer.py 
 ```
 
+To run deephyper with fno , run
+```bash
+python train_fno_darcy_dhp.py 
+```
+
 ## Additional Information
 
 ## References
