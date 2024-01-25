@@ -21,7 +21,7 @@ arch:
   fno:
     in_channels: 1
     dimension: 2
-    latent_channels: 32
+    latent_channels: 32 
     fno_layers: 4
     fno_modes: 12
     padding: 9
@@ -43,9 +43,9 @@ training:
   resolution: 128
   batch_size: 64
   rec_results_freq : 8
-  max_pseudo_epochs: 8
-  pseudo_epoch_sample_size: 2048
+  max_pseudo_epochs: 80 
+  pseudo_epoch_sample_size: 2048 
 
 validation:
-  sample_size: 128
+  sample_size: 256 
   validation_pseudo_epochs: 2 
