@@ -19,22 +19,10 @@ training data will be generated on the fly.
 Progress can be monitored using MLFlow. Open a new terminal and navigate to the training
 directory, then run:
 
+To train the baseline model, run
 ```bash
-mlflow ui -p 2458
+python Trainer.py 
 ```
-
-View progress in a browser at <http://127.0.0.1:2458>
-
-If training on a remote machine, set up a ssh tunnel to
-the server with `LocalForward 8080 your_remote_machine_addr:8080`.
-ssh to the server via the specified port, in this case `8080`, navigate to the training
-directory and launch mlflow server
-
-```bash
-mlflow server --host 0.0.0.0 --port 8080
-```
-
-On your local machine, open a browser and connect to `localhost:8080`.
 
 ## Additional Information
 
