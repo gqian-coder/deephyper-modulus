@@ -12,6 +12,7 @@ from modulus.utils import StaticCaptureTraining, StaticCaptureEvaluateNoGrad
 from modulus.datapipes.benchmarks.darcy import Darcy2D
 from validator import GridValidator
 from math import ceil
+import sys
 
 def get_optimizer(name):
     if name == "Adadelta":
@@ -115,6 +116,7 @@ class Trainer:
             
             runningLoss = runningLoss / steps_per_pseudo_epoch
             print("runningLoss: ", runningLoss.cpu().numpy())
+            sys.stdout.flush()
 
             ## save checkpoint
             #if pseudo_epoch % cfg.training.rec_results_freq == 0:

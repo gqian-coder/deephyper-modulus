@@ -16,6 +16,13 @@ from deephyper.evaluator import profile, RunningJob
 from Trainer import *
 from omegaconf import OmegaConf
 import numpy as np
+import sys
+import pandas as pd
+
+import os
+import gc
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:256"
 
 def run(job: RunningJob):
     cfg = OmegaConf.load('config.yaml')
@@ -37,7 +44,7 @@ def run(job: RunningJob):
     ).to(dist.device)
 
     loss_fun  = torch.nn.MSELoss()
-    optimizer = get_optimizer(Adam)#param["optimizer"])
+    optimizer = get_optimizer("Adam")#param["optimizer"])
     optimizer = optimizer(
         model.parameters(), lr=cfg.scheduler.initial_lr#param["lr"]
     )
@@ -48,6 +55,8 @@ def run(job: RunningJob):
     #scheduler = torch.optim.lr_scheduler.LambdaLR(
     #    optimizer, lr_lambda=lambda step: cfg.scheduler.decay_rate**step
     #)
+    print("======================== Search ===================")
+    print("param: decoder_layers = {}, decoder_layer_size = {}, latent_channels = {}, num_fno_layers = {}, num_fno_modes = {}".format(param["decoder_layers"], param["layer_size"], param["latent_channels"], param["fno_layers"], param["fno_modes"]))
     norm_vars = cfg.normaliser
     normaliser = {
         "permeability": (norm_vars.permeability.mean, norm_vars.permeability.std_dev),
@@ -80,6 +89,9 @@ def run(job: RunningJob):
     NumTrainableParams = log.logger["NumTrainableParams"]
 
     objective = valLoss[-1]
+    del dataloader, trainer 
+    gc.collect()
+    torch.cuda.empty_cache()
     return {
         "objective": objective,
         "metadata": {"TrainLoss": trainLoss, "ValLoss": valLoss},
@@ -137,6 +149,23 @@ if __name__ == '__main__':
     #print("ValLoss: ", results["metadata"]["ValLoss"])
 
     print("problem: ", problem)    
+    sys.stdout.flush()
+  
+    results = pd.read_csv('results.csv')
+    # Create a new evaluator
+    with Evaluator.create(
+        run,
+    ) as evaluator: 
+        if evaluator is not None:
+            # Create a new AMBS search with strong explotation (i.e., small kappa)
+            search_from_checkpoint = CBO(problem, evaluator)
+            search_from_checkpoint.fit_surrogate(results)
+            results_from_checkpoint = search_from_checkpoint.search(max_evals=25)
+
+    # Initialize surrogate model of Bayesian optization
+    # With results of previous search
+    search_from_checkpoint.fit_surrogate(results)
+    '''
     with Evaluator.create(
         run,
         #method="mpicomm",
@@ -156,4 +185,4 @@ if __name__ == '__main__':
             )
             results = search.search(max_evals=200)
             results.to_csv("results-1odes-stopper.csv")
-   
+    '''  
