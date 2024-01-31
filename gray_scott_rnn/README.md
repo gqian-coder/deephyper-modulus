@@ -41,7 +41,7 @@ The example script contains code to download and do any pre-processing for the d
 To get started, simply run
 
 ```bash
-python gray_scott_rnn.py
+python gray_scott_rnn_dhp.py
 ```
 
 ## References

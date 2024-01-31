@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import os
-import tarfile
-import urllib.request
+import sys
+import zipfile
 import h5py
 import numpy as np
 import torch
@@ -23,12 +23,13 @@ from omegaconf import DictConfig
 from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from modulus.models.rnn.rnn_one2many import One2ManyRNN
+from modulus.models.rnn.rnn_seq2seq import Seq2SeqRNN
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 from typing import Union
 from modulus.launch.utils import load_checkpoint, save_checkpoint
 from modulus.launch.logging import PythonLogger, LaunchLogger
 from hydra.utils import to_absolute_path
-from pyevtk.hl import imageToVTK
 
 from deephyper.evaluator import profile, RunningJob
 from deephyper.search.hps import CBO
@@ -83,66 +84,73 @@ class Logger:
 def prepare_data(
     input_data_path,
     output_data_path,
+    input_nr_tsteps,
     predict_nr_tsteps,
-    start_timestep,
+    start_idx,
+    num_samples,
 ):
     """Data pre-processing"""
     if Path(output_data_path).is_file():
         pass
     else:
+        arrays = {}
         data = h5py.File(input_data_path)
-        list_data = []
-        for i in range(len(list(data.keys()))):
-            data_u = data[str(i)]["u"]
-            data_v = data[str(i)]["v"]
-            data_uv = np.stack([data_u, data_v], axis=0)
-            data_uv = np.array(data_uv)
-            list_data.append(data_uv)
 
-        data.close()
-        data_combined = np.stack(list_data, axis=0)
+        for k, v in data.items():
+            arrays[k] = np.array(v)
+
+        invar = arrays["u"][
+            input_nr_tsteps : input_nr_tsteps + predict_nr_tsteps,
+            ...,
+            start_idx : start_idx + num_samples,
+        ]
+        outvar = arrays["u"][
+            input_nr_tsteps
+            + predict_nr_tsteps : input_nr_tsteps
+            + 2 * predict_nr_tsteps,
+            ...,
+            start_idx : start_idx + num_samples,
+        ]
+        invar = np.moveaxis(invar, -1, 0)
+        outvar = np.moveaxis(outvar, -1, 0)
+        invar = np.expand_dims(invar, axis=1)
+        outvar = np.expand_dims(outvar, axis=1)
 
         h = h5py.File(output_data_path, "w")
-        h.create_dataset(
-            "invar",
-            data=np.expand_dims(data_combined[:, :, start_timestep, ...], axis=2),
-        )
-        h.create_dataset(
-            "outvar",
-            data=data_combined[
-                :, :, start_timestep + 1 : start_timestep + 1 + predict_nr_tsteps, ...
-            ],
-        )
+        h.create_dataset("invar", data=invar)
+        h.create_dataset("outvar", data=outvar)
         h.close()
 
 
-def validation_step(model, dataloader):
-    """Validation Step"""
+def validation_step(model, dataloader, epoch):
+    """Validation step"""
     model.eval()
-    valLoss = 0
+
+    loss_epoch = 0
     for data in dataloader:
         invar, outvar = data
         predvar = model(invar)
-        loss = F.mse_loss(outvar, predvar)
-        valLoss += loss.detach().cpu().numpy()
+        loss_epoch += F.mse_loss(outvar, predvar)
 
     # convert data to numpy
     outvar = outvar.detach().cpu().numpy()
     predvar = predvar.detach().cpu().numpy()
 
     # plotting
+    fig, ax = plt.subplots(2, outvar.shape[2], figsize=(5 * outvar.shape[2], 10))
     for t in range(outvar.shape[2]):
-        cellData = {
-            "outvar_chan0": outvar[0, 0, t, ...],
-            "outvar_chan1": outvar[0, 1, t, ...],
-            "predvar_chan0": predvar[0, 0, t, ...],
-            "predvar_chan1": predvar[0, 1, t, ...],
-        }
-        imageToVTK(f"./test/test_{t}", cellData=cellData)
-    return valLoss / len(dataloader) 
+        ax[0, t].imshow(outvar[0, 0, t, ...])
+        ax[1, t].imshow(predvar[0, 0, t, ...])
+        ax[0, t].set_title(f"True: {t}")
+        ax[1, t].set_title(f"Pred: {t}")
+
+    fig.savefig(f"./test_{epoch}.png")
+    plt.close()
+    return loss_epoch / len(dataloader)
+
 
 class HDF5MapStyleDataset(Dataset):
-    """Simple map-stype HDF5 dataset"""
+    """Simple map-style HDF5 dataset"""
 
     def __init__(
         self,
@@ -180,61 +188,70 @@ class HDF5MapStyleDataset(Dataset):
 
         return invar, outvar
 
+
 def run(job: RunningJob):
-    cfg = OmegaConf.load('conf/config_3d.yaml')
-    # Data download
-    raw_train_data_path = to_absolute_path("./datasets/grayscott_training.hdf5")
-    raw_test_data_path = to_absolute_path("./datasets/grayscott_test.hdf5")
+    cfg = OmegaConf.load('conf/config_2d.yaml')
 
+    raw_data_path = to_absolute_path("./datasets/ns_V1e-3_N5000_T50.mat")
     # Download data
-    if Path(raw_train_data_path).is_file():
+    if Path(raw_data_path).is_file():
         pass
     else:
+        try:
+            import gdown
+        except:
+            print(
+                "gdown package not found, install it using `pip install gdown`"
+            )
+            sys.exit()
         print("Data download starting...")
-        url = "https://zenodo.org/record/5148524/files/grayscott_training.tar.gz"
+        url = "https://drive.google.com/uc?id=1r3idxpsHa21ijhlu3QQ1hVuXcqnBTO7d"
         os.makedirs(to_absolute_path("./datasets/"), exist_ok=True)
-        output_path = to_absolute_path("./datasets/grayscott_training.tar.gz")
-        urllib.request.urlretrieve(url, output_path)
+        output_path = to_absolute_path("./datasets/navier_stokes.zip")
+        gdown.download(url, output_path, quiet=False)
         print("Data downloaded.")
         print("Extracting data...")
-        with tarfile.open(output_path, "r") as tar_ref:
-            tar_ref.extractall(to_absolute_path("./datasets/"))
-        print("Data extracted")
-
-    if Path(raw_test_data_path).is_file():
-        pass
-    else:
-        print("Data download starting...")
-        url = "https://zenodo.org/record/5148524/files/grayscott_test.tar.gz"
-        os.makedirs(to_absolute_path("./datasets/"), exist_ok=True)
-        output_path = to_absolute_path("./datasets/grayscott_test.tar.gz")
-        urllib.request.urlretrieve(url, output_path)
-        print("Data downloaded.")
-        print("Extracting data...")
-        with tarfile.open(output_path, "r") as tar_ref:
-            tar_ref.extractall(to_absolute_path("./datasets/"))
+        with zipfile.ZipFile(output_path, "r") as zip_ref:
+            zip_ref.extractall(to_absolute_path("./datasets/"))
         print("Data extracted")
 
     # Data pre-processing
-    nr_tsteps_to_predict = 64
-    nr_tsteps_to_test = 64
-    start_timestep = 5
+    num_samples = 1000
+    test_samples = 10
+    nr_tsteps_to_predict = 16
+    nr_tsteps_to_test = 16
 
-    train_save_path = "./train_data_gray_scott_one2many.hdf5"
-    test_save_path = "./test_data_gray_scott_one2many.hdf5"
+    if cfg.model_type == "one2many":
+        input_nr_tsteps = 1
+    elif cfg.model_type == "seq2seq":
+        input_nr_tsteps = nr_tsteps_to_predict
+    else:
+        print("Invalid model type!")
+
+    raw_data_path = to_absolute_path("./datasets/ns_V1e-3_N5000_T50.mat")
+    train_save_path = "./train_data_" + str(cfg.model_type) + ".hdf5"
+    test_save_path = "./test_data_" + str(cfg.model_type) + ".hdf5"
 
     # prepare data
     prepare_data(
-        raw_train_data_path, train_save_path, nr_tsteps_to_predict, start_timestep
+        raw_data_path,
+        train_save_path,
+        input_nr_tsteps,
+        nr_tsteps_to_predict,
+        0,
+        num_samples,
     )
     prepare_data(
-        raw_test_data_path,
+        raw_data_path,
         test_save_path,
+        input_nr_tsteps,
         nr_tsteps_to_test,
-        start_timestep,
+        num_samples,
+        test_samples,
     )
 
     param = job.parameters.copy()
+
     train_dataset = HDF5MapStyleDataset(train_save_path, device="cuda")
     train_dataloader = DataLoader(
         train_dataset, batch_size=param["batch_size"], shuffle=True
@@ -245,21 +262,33 @@ def run(job: RunningJob):
     )
 
     # instantiate model
-    arch = One2ManyRNN(
-        input_channels=2, # fixed by tasks
-        dimension=3, # fixed by tasks
-        nr_tsteps=nr_tsteps_to_predict, # Time steps to predict fixed by tasks 
-        nr_downsamples=param["nr_downsamples"],
-        nr_residual_blocks=param["nr_residual_blocks"],
-        nr_latent_channels=param["nr_latent_channels"],
-    )
+    if cfg.model_type == "one2many":
+        arch = One2ManyRNN(
+            input_channels=1,
+            dimension=2,
+            nr_tsteps=nr_tsteps_to_predict,
+            nr_downsamples=param["nr_downsamples"],
+            nr_residual_blocks=param["nr_residual_blocks"],
+            nr_latent_channels=param["nr_latent_channels"],
+        )
+    elif cfg.model_type == "seq2seq":
+        arch = Seq2SeqRNN(
+            input_channels=1,
+            dimension=2,
+            nr_tsteps=nr_tsteps_to_predict,
+            nr_downsamples=param["nr_downsamples"],
+            nr_residual_blocks=param["nr_residual_blocks"],
+            nr_latent_channels=param["nr_latent_channels"],
+        )
+    else:
+        print("Invalid model type!")
 
     if device == "cuda":
         arch.cuda()
-    
+
     optimizer = get_optimizer(param["optimizer"])
     optimizer = optimizer(
-        arch.parameters(), lr=param["lr"] 
+        arch.parameters(), lr=param["lr"]
     )
     scheduler = torch.optim.lr_scheduler.ExponentialLR(
         optimizer, gamma=param["lr_scheduler_gamma"]
@@ -272,12 +301,12 @@ def run(job: RunningJob):
     #    scheduler=scheduler,
     #    device="cuda",
     #)
-
     logger = Logger("./log/")
     logger.log(
         "NumTrainableParams",
         sum(p.numel() for p in arch.parameters() if p.requires_grad),
     )
+
     # Training loop
     trainLoss = 0
     print("training num_mini_batch: {}, testing num_mini_batch: {}".format(len(train_dataloader), len(test_dataloader)))
@@ -286,7 +315,7 @@ def run(job: RunningJob):
         # wrap epoch in launch logger for console logs
         num_mini_batch=len(train_dataloader),
         # go through the full dataset
-        for i, data in enumerate(train_dataloader):
+        for data in train_dataloader:
             invar, outvar = data
             optimizer.zero_grad()
             outpred = arch(invar)
@@ -296,21 +325,14 @@ def run(job: RunningJob):
             optimizer.step()
             scheduler.step()
             trainLoss += loss.detach().cpu().numpy()
-            if (i%log_freq == 0):   
-                print("batch {}, loss = {}".format(i, loss.detach().cpu().numpy())) 
-                sys.stdout.flush()
-        trainLoss = trainLoss / num_mini_batch 
+            # log.log_minibatch({"loss": loss.detach()})
+        trainLoss = trainLoss / num_mini_batch
 
-        valLoss = validation_step(arch, test_dataloader)
+        valLoss = validation_step(arch, test_dataloader, epoch)
         print("Epoch: ", epoch)
         print("trainingLoss: ", trainLoss)
         print("valLoss: ", valLoss)
         sys.stdout.flush()
-
-        logger.log("Epoch", epoch)
-        logger.log("Learning Rate", optimizer.param_groups[0]["lr"])
-        logger.log("TrainLoss", trainLoss)
-        logger.log("ValLoss", valLoss)
 
         #if epoch % cfg.checkpoint_save_freq == 0:
         #    save_checkpoint(
@@ -321,6 +343,7 @@ def run(job: RunningJob):
         #        epoch=epoch,
         #    )
 
+    print("Finished an evaluation")
     objective = valLoss.cpu().numpy()[-1]
     del test_dataloader, train_dataloader
     gc.collect()
@@ -331,8 +354,9 @@ def run(job: RunningJob):
     }
     return logger
 
-if __name__ == '__main__':
-    cfg = OmegaConf.load('conf/config_3d.yaml')
+
+if __name__ == "__main__":
+    cfg = OmegaConf.load('conf/config_2d.yaml')
     problem = HpProblem()
     # Discrete hyperparameter (sampled with uniform prior)
     # Categorical hyperparameter (sampled with uniform prior)
@@ -340,9 +364,9 @@ if __name__ == '__main__':
     optimizers = ["Adadelta", "Adagrad", "Adam", "AdaBound", "RMSprop", "SGD"]
     schedulers = ["cosine", "step"]
 
-    problem.add_hyperparameter((2, 16), "nr_downsamples", default_value=2)
+    problem.add_hyperparameter((2, 16), "nr_downsamples", default_value=3)
     problem.add_hyperparameter((2, 16), "nr_residual_blocks", default_value=2)
-    problem.add_hyperparameter((8, 512), "nr_latent_channels", default_value=16)
+    problem.add_hyperparameter((8, 512), "nr_latent_channels", default_value=32)
     problem.add_hyperparameter(optimizers, "optimizer", default_value="Adam")
     problem.add_hyperparameter((1e-6,1e-2,"log-uniform"), "lr", default_value=cfg.start_lr)
     problem.add_hyperparameter((0.9,1.0), "lr_scheduler_gamma", default_value=cfg.lr_scheduler_gamma)
@@ -350,7 +374,7 @@ if __name__ == '__main__':
 
     print("problem: ", problem)
     sys.stdout.flush()
-    
+
     with Evaluator.create(
         run,
         #method="mpicomm",
@@ -360,15 +384,7 @@ if __name__ == '__main__':
                 problem,
                 evaluator,
                 n_jobs=1,
-                #verbose=1,
                 initial_points=[problem.default_configuration]
             )
             results = search.search(max_evals=50)
-            results.to_csv("results-1odes.csv")
-
-
-
-
-
-
-
+            results.to_csv("results-1odes.csv") 
