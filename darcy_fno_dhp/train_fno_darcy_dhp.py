@@ -140,8 +140,8 @@ if __name__ == '__main__':
     ## problem.add_hyperparameter(schedulers, "scheduler", default_value='cosine')
     ##problem.add_hyperparameter((16, 256), "batch_size", default_value=64)
     ##problem.add_hyperparameter((20, 100), 'epochs', default_value=20)
-    problem.add_hyperparameter((0.35, 0.95), "decay_rate", default_value=0.85)
-    problem.add_hyperparameter((4, 16), "decay_epoch", default_value=8)
+    #problem.add_hyperparameter((0.35, 0.95), "decay_rate", default_value=0.85)
+    #problem.add_hyperparameter((4, 16), "decay_epoch", default_value=8)
     
     # Baseline of training
     #results = run(RunningJob(parameters=problem.default_configuration)) 
@@ -164,7 +164,6 @@ if __name__ == '__main__':
 
     # Initialize surrogate model of Bayesian optization
     # With results of previous search
-    search_from_checkpoint.fit_surrogate(results)
     '''
     with Evaluator.create(
         run,
