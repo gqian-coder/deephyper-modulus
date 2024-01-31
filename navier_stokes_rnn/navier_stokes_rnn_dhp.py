@@ -146,7 +146,7 @@ def validation_step(model, dataloader, epoch):
 
     fig.savefig(f"./test_{epoch}.png")
     plt.close()
-    return loss_epoch / len(dataloader)
+    return loss_epoch.detach().cpu().numpy() / len(dataloader)
 
 
 class HDF5MapStyleDataset(Dataset):
@@ -333,6 +333,11 @@ def run(job: RunningJob):
         print("trainingLoss: ", trainLoss)
         print("valLoss: ", valLoss)
         sys.stdout.flush()
+
+        logger.log("Epoch", epoch)
+        logger.log("Learning Rate", optimizer.param_groups[0]["lr"])
+        logger.log("TrainLoss", trainLoss)
+        logger.log("ValLoss", valLoss)
 
         #if epoch % cfg.checkpoint_save_freq == 0:
         #    save_checkpoint(
