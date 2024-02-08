@@ -41,7 +41,7 @@ scheduler:
 
 training:
   resolution: 128
-  batch_size: 64
+  batch_size: 32 
   rec_results_freq : 8
   max_pseudo_epochs: 80 
   pseudo_epoch_sample_size: 2048 

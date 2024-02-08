@@ -88,7 +88,7 @@ def run(job: RunningJob):
     valLoss = log.logger["ValLoss"]
     NumTrainableParams = log.logger["NumTrainableParams"]
 
-    objective = valLoss[-1]
+    objective = -valLoss[-1]
     del dataloader, trainer 
     gc.collect()
     torch.cuda.empty_cache()
@@ -150,7 +150,7 @@ if __name__ == '__main__':
 
     print("problem: ", problem)    
     sys.stdout.flush()
-  
+    ''' 
     results = pd.read_csv('results.csv')
     # Create a new evaluator
     with Evaluator.create(
@@ -160,7 +160,7 @@ if __name__ == '__main__':
             # Create a new AMBS search with strong explotation (i.e., small kappa)
             search_from_checkpoint = CBO(problem, evaluator)
             search_from_checkpoint.fit_surrogate(results)
-            results_from_checkpoint = search_from_checkpoint.search(max_evals=25)
+            results_from_checkpoint = search_from_checkpoint.search(max_evals=50)
 
     # Initialize surrogate model of Bayesian optization
     # With results of previous search
@@ -184,4 +184,4 @@ if __name__ == '__main__':
             )
             results = search.search(max_evals=200)
             results.to_csv("results-1odes-stopper.csv")
-    '''  
+    

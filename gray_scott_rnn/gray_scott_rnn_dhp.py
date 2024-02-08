@@ -321,7 +321,11 @@ def run(job: RunningJob):
         #        epoch=epoch,
         #    )
 
-    objective = valLoss.cpu().numpy()[-1]
+    trainLoss = log.logger["TrainLoss"]
+    valLoss = log.logger["ValLoss"]
+    NumTrainableParams = log.logger["NumTrainableParams"]
+
+    objective = -valLoss[-1]
     del test_dataloader, train_dataloader
     gc.collect()
     torch.cuda.empty_cache()

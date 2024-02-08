@@ -54,8 +54,6 @@ def get_optimizer(name):
         optimizer = torch.optim.Adagrad
     elif name == "Adam":
         optimizer = torch.optim.Adam
-    elif name == "AdaBound":
-        optimizer = torch.optim.AdaBound
     elif name == "RMSprop":
         optimizer = torch.optim.RMSprop
     elif name == "SGD":
@@ -144,7 +142,7 @@ def validation_step(model, dataloader, epoch):
         ax[0, t].set_title(f"True: {t}")
         ax[1, t].set_title(f"Pred: {t}")
 
-    fig.savefig(f"./test_{epoch}.png")
+    fig.savefig(f"./test/test_{epoch}.png")
     plt.close()
     return loss_epoch.detach().cpu().numpy() / len(dataloader)
 
@@ -191,7 +189,9 @@ class HDF5MapStyleDataset(Dataset):
 
 def run(job: RunningJob):
     cfg = OmegaConf.load('conf/config_2d.yaml')
-
+    param = job.parameters.copy()
+    print("parameters: batch_size={}, lr={}, dwn={}, nr_residual_blocks={}, latent_channels={}".format(param["batch_size"], param["lr"], param["nr_downsamples"], param["nr_residual_blocks"], param["nr_latent_channels"]))
+    sys.stdout.flush()
     raw_data_path = to_absolute_path("./datasets/ns_V1e-3_N5000_T50.mat")
     # Download data
     if Path(raw_data_path).is_file():
@@ -250,8 +250,6 @@ def run(job: RunningJob):
         test_samples,
     )
 
-    param = job.parameters.copy()
-
     train_dataset = HDF5MapStyleDataset(train_save_path, device="cuda")
     train_dataloader = DataLoader(
         train_dataset, batch_size=param["batch_size"], shuffle=True
@@ -260,7 +258,9 @@ def run(job: RunningJob):
     test_dataloader = DataLoader(
         test_dataset, batch_size=param["batch_size"], shuffle=False
     )
-
+        
+    print("model type: ", cfg.model_type)
+    sys.stdout.flush()
     # instantiate model
     if cfg.model_type == "one2many":
         arch = One2ManyRNN(
@@ -282,6 +282,9 @@ def run(job: RunningJob):
         )
     else:
         print("Invalid model type!")
+
+    print("Finish creating the model")
+    sys.stdout.flush()
 
     if device == "cuda":
         arch.cuda()
@@ -347,10 +350,13 @@ def run(job: RunningJob):
         #        scheduler=scheduler,
         #        epoch=epoch,
         #    )
+    trainLoss = logger.logger["TrainLoss"]
+    valLoss = logger.logger["ValLoss"]
+    NumTrainableParams = logger.logger["NumTrainableParams"]
 
     print("Finished an evaluation")
-    objective = valLoss.cpu().numpy()[-1]
-    del test_dataloader, train_dataloader
+    objective = -valLoss[-1]
+    del test_dataloader, train_dataloader, arch
     gc.collect()
     torch.cuda.empty_cache()
     return {
@@ -366,16 +372,16 @@ if __name__ == "__main__":
     # Discrete hyperparameter (sampled with uniform prior)
     # Categorical hyperparameter (sampled with uniform prior)
 
-    optimizers = ["Adadelta", "Adagrad", "Adam", "AdaBound", "RMSprop", "SGD"]
+    optimizers = ["Adadelta", "Adagrad", "Adam", "RMSprop", "SGD"]
     schedulers = ["cosine", "step"]
 
     problem.add_hyperparameter((2, 16), "nr_downsamples", default_value=3)
     problem.add_hyperparameter((2, 16), "nr_residual_blocks", default_value=2)
-    problem.add_hyperparameter((8, 512), "nr_latent_channels", default_value=32)
+    problem.add_hyperparameter((8, 64), "nr_latent_channels", default_value=32)
     problem.add_hyperparameter(optimizers, "optimizer", default_value="Adam")
-    problem.add_hyperparameter((1e-6,1e-2,"log-uniform"), "lr", default_value=cfg.start_lr)
+    problem.add_hyperparameter((1e-4,1e-3,"log-uniform"), "lr", default_value=cfg.start_lr)
     problem.add_hyperparameter((0.9,1.0), "lr_scheduler_gamma", default_value=cfg.lr_scheduler_gamma)
-    problem.add_hyperparameter((1,16), "batch_size", default_value=cfg.batch_size)
+    problem.add_hyperparameter((1,8), "batch_size", default_value=cfg.batch_size)
 
     print("problem: ", problem)
     sys.stdout.flush()
@@ -388,8 +394,7 @@ if __name__ == "__main__":
             search = CBO(
                 problem,
                 evaluator,
-                n_jobs=1,
                 initial_points=[problem.default_configuration]
             )
-            results = search.search(max_evals=50)
+            results = search.search(max_evals=200)
             results.to_csv("results-1odes.csv") 
