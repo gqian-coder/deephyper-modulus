@@ -1,0 +1,81 @@
+calls:
+- max_evals: 200
+  timeout: null
+search:
+  acq_func: UCB
+  acq_optimizer: auto
+  evaluator:
+    num_workers: 1
+    type: SerialEvaluator
+  filter_duplicated: true
+  filter_failures: mean
+  initial_point_generator: random
+  initial_points:
+  - decoder_layers: 1
+    fno_layers: 4
+    fno_modes: 12
+    latent_channels: 32
+    layer_size: 32
+  kappa: 1.96
+  kwargs: {}
+  log_dir: .
+  max_failures: 100
+  moo_lower_bounds: null
+  moo_scalarization_strategy: Chebyshev
+  moo_scalarization_weight: null
+  multi_point_strategy: cl_max
+  n_initial_points: 10
+  n_jobs: 1
+  n_points: 10000
+  objective_scaler: auto
+  problem:
+    conditions: []
+    forbiddens: []
+    hyperparameters:
+    - default: 1
+      log: false
+      lower: 1
+      name: decoder_layers
+      q: null
+      type: uniform_int
+      upper: 12
+    - default: 4
+      log: false
+      lower: 2
+      name: fno_layers
+      q: null
+      type: uniform_int
+      upper: 16
+    - default: 12
+      log: false
+      lower: 2
+      name: fno_modes
+      q: null
+      type: uniform_int
+      upper: 32
+    - default: 32
+      log: false
+      lower: 8
+      name: latent_channels
+      q: null
+      type: uniform_int
+      upper: 64
+    - default: 32
+      log: false
+      lower: 16
+      name: layer_size
+      q: null
+      type: uniform_int
+      upper: 64
+    json_format_version: 0.4
+    python_module_version: 0.6.1
+  random_state: null
+  scheduler: null
+  stopper: null
+  surrogate_model: RF
+  sync_communication: false
+  type: CBO
+  update_prior: false
+  update_prior_quantile: 0.1
+  verbose: 0
+  xi: 0.001
