@@ -190,7 +190,7 @@ class HDF5MapStyleDataset(Dataset):
 def run(job: RunningJob):
     cfg = OmegaConf.load('conf/config_2d.yaml')
     param = job.parameters.copy()
-    print("parameters: batch_size={}, lr={}, dwn={}, nr_residual_blocks={}, latent_channels={}".format(param["batch_size"], param["lr"], param["nr_downsamples"], param["nr_residual_blocks"], param["nr_latent_channels"]))
+    print("parameters: dwn={}, nr_residual_blocks={}, latent_channels={}".format(param["nr_downsamples"], param["nr_residual_blocks"], param["nr_latent_channels"]))
     sys.stdout.flush()
     raw_data_path = to_absolute_path("./datasets/ns_V1e-3_N5000_T50.mat")
     # Download data
@@ -252,11 +252,11 @@ def run(job: RunningJob):
 
     train_dataset = HDF5MapStyleDataset(train_save_path, device="cuda")
     train_dataloader = DataLoader(
-        train_dataset, batch_size=param["batch_size"], shuffle=True
+        train_dataset, batch_size=cfg.batch_size, shuffle=True
     )
     test_dataset = HDF5MapStyleDataset(test_save_path, device="cuda")
     test_dataloader = DataLoader(
-        test_dataset, batch_size=param["batch_size"], shuffle=False
+        test_dataset, batch_size=cfg.batch_size_test, shuffle=False
     )
         
     print("model type: ", cfg.model_type)
@@ -289,12 +289,18 @@ def run(job: RunningJob):
     if device == "cuda":
         arch.cuda()
 
-    optimizer = get_optimizer(param["optimizer"])
-    optimizer = optimizer(
-        arch.parameters(), lr=param["lr"]
+    optimizer = torch.optim.Adam(
+        arch.parameters(),
+        betas=(0.9, 0.999),
+        lr=cfg.start_lr,
+        weight_decay=0.0,
     )
+    #optimizer = get_optimizer(param["optimizer"])
+    #optimizer = optimizer(
+    #    arch.parameters(), lr=param['lr']
+    #)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(
-        optimizer, gamma=param["lr_scheduler_gamma"]
+        optimizer, gamma=cfg.lr_scheduler_gamma #gamma=param["lr_scheduler_gamma"]
     )
 
     #loaded_epoch = load_checkpoint(
@@ -309,11 +315,13 @@ def run(job: RunningJob):
         "NumTrainableParams",
         sum(p.numel() for p in arch.parameters() if p.requires_grad),
     )
+    NumTrainableParams = logger.logger["NumTrainableParams"]
 
     # Training loop
     trainLoss = 0
+    print("NumTrainableParams = ", NumTrainableParams)
     print("training num_mini_batch: {}, testing num_mini_batch: {}".format(len(train_dataloader), len(test_dataloader)))
-    log_freq = int(len(train_dataloader)*0.1)
+    sys.stdout.flush()
     for epoch in range(cfg.max_epochs + 1):
         # wrap epoch in launch logger for console logs
         num_mini_batch=len(train_dataloader),
@@ -352,18 +360,16 @@ def run(job: RunningJob):
         #    )
     trainLoss = logger.logger["TrainLoss"]
     valLoss = logger.logger["ValLoss"]
-    NumTrainableParams = logger.logger["NumTrainableParams"]
 
     print("Finished an evaluation")
     objective = -valLoss[-1]
-    del test_dataloader, train_dataloader, arch
+    del train_dataset, test_dataset, test_dataloader, train_dataloader, arch
     gc.collect()
     torch.cuda.empty_cache()
     return {
         "objective": objective,
-        "metadata": {"TrainLoss": trainLoss, "ValLoss": valLoss},
+        "metadata": {"TrainLoss": trainLoss, "ValLoss": valLoss, "NumTrainableParams": NumTrainableParams},
     }
-    return logger
 
 
 if __name__ == "__main__":
@@ -375,17 +381,31 @@ if __name__ == "__main__":
     optimizers = ["Adadelta", "Adagrad", "Adam", "RMSprop", "SGD"]
     schedulers = ["cosine", "step"]
 
-    problem.add_hyperparameter((2, 16), "nr_downsamples", default_value=3)
-    problem.add_hyperparameter((2, 16), "nr_residual_blocks", default_value=2)
-    problem.add_hyperparameter((8, 64), "nr_latent_channels", default_value=32)
-    problem.add_hyperparameter(optimizers, "optimizer", default_value="Adam")
-    problem.add_hyperparameter((1e-4,1e-3,"log-uniform"), "lr", default_value=cfg.start_lr)
-    problem.add_hyperparameter((0.9,1.0), "lr_scheduler_gamma", default_value=cfg.lr_scheduler_gamma)
-    problem.add_hyperparameter((1,8), "batch_size", default_value=cfg.batch_size)
+    problem.add_hyperparameter((1, 6), "nr_downsamples", default_value=3)
+    problem.add_hyperparameter((1, 4), "nr_residual_blocks", default_value=2)
+    problem.add_hyperparameter((18, 36), "nr_latent_channels", default_value=32)
+    #problem.add_hyperparameter(optimizers, "optimizer", default_value="Adam")
+    #problem.add_hyperparameter((1e-4,1e-3,"log-uniform"), "lr", default_value=cfg.start_lr)
+    #problem.add_hyperparameter((0.9,1.0), "lr_scheduler_gamma", default_value=cfg.lr_scheduler_gamma)
+    #problem.add_hyperparameter((1,8), "batch_size", default_value=cfg.batch_size)
 
     print("problem: ", problem)
     sys.stdout.flush()
+    
+    results = pd.read_csv('results.csv')
+    # Create a new evaluator
+    with Evaluator.create(
+        run,
+    ) as evaluator:
+        if evaluator is not None:
+            # Create a new AMBS search with strong explotation (i.e., small kappa)
+            search_from_checkpoint = CBO(problem, evaluator)
+            search_from_checkpoint.fit_surrogate(results)
+            results_from_checkpoint = search_from_checkpoint.search(max_evals=50)
 
+    # Initialize surrogate model of Bayesian optization
+    # With results of previous search
+    '''
     with Evaluator.create(
         run,
         #method="mpicomm",
@@ -396,5 +416,6 @@ if __name__ == "__main__":
                 evaluator,
                 initial_points=[problem.default_configuration]
             )
-            results = search.search(max_evals=200)
+            results = search.search(max_evals=100)
             results.to_csv("results-1odes.csv") 
+   ''' 
